@@ -124,6 +124,9 @@ const Signup = () => {
         email: 'An account with this email already exists.',
       }));
     } else {
+      console.log("------- status :",status);
+      console.log("------- status :",data);
+      
       setApiError(extractApiError(data));
     }
   };
