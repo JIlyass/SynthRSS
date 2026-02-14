@@ -1,17 +1,14 @@
 /**
  * src/services/api.js
  *
- * Centralised API client for the BrieflyAI backend.
- * All fetch calls live here so the pages stay clean and backend URL
- * changes only need to happen in one place.
+ * Client API centralisé pour le backend BrieflyAI sur Railway.
  */
 
-// ── Base URL ─────────────────────────────────────────────────────────────────
-// In production, change this to your deployed backend URL or use an env var:
-//   REACT_APP_API_URL=https://api.brieflyai.com
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
+// ── Configuration de l'URL ───────────────────────────────────────────────────
+// REMPLACEZ l'URL ci-dessous par l'URL publique générée par Railway (ex: https://synthrss-backend-production.up.railway.app)
+const API_BASE = process.env.REACT_APP_API_URL || "synthrssbackend-production.up.railway.app/";
 
-// ── Token helpers ─────────────────────────────────────────────────────────────
+// ── Gestion du Token ─────────────────────────────────────────────────────────
 const TOKEN_KEY = "brieflyai_token";
 
 export const tokenStorage = {
@@ -21,30 +18,19 @@ export const tokenStorage = {
   exists: ()      => !!localStorage.getItem(TOKEN_KEY),
 };
 
-// ── Core fetch wrapper ───────────────────────────────────────────────────────
-/**
- * Perform a JSON API request.
- *
- * @param {string} path   - API path, e.g. "/api/auth/login"
- * @param {object} options - fetch options (method, body, etc.)
- * @returns {Promise<{ ok: boolean, status: number, data: any }>}
- *
- * The returned object always has:
- *   .ok     — true if HTTP 2xx
- *   .status — the HTTP status code
- *   .data   — parsed JSON body
- */
+// ── Wrapper Core Fetch ───────────────────────────────────────────────────────
 async function request(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const headers = { ...options.headers };
 
-  // Attach Bearer token if one is stored
+  // N'ajoute le Content-Type JSON que si ce n'est pas déjà défini (pour laisser le login gérer le sien)
+  if (!headers["Content-Type"] && !(options.body instanceof URLSearchParams)) {
+    headers["Content-Type"] = "application/json";
+  }
+
   const token = tokenStorage.get();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
-
-  let data = null;
-  let status = 0;
 
   try {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -52,36 +38,27 @@ async function request(path, options = {}) {
       headers,
     });
 
-    status = response.status;
-
-    // Try to parse JSON — some error responses have a body, some don't
+    let data = null;
     try {
       data = await response.json();
     } catch {
       data = { message: response.statusText };
     }
 
-    return { ok: response.ok, status, data };
+    return { ok: response.ok, status: response.status, data };
   } catch (networkError) {
-    // Network failure (server down, CORS misconfiguration, etc.)
     return {
       ok: false,
       status: 0,
-      data: {
-        message:
-          "Cannot reach the server. Please check your connection or try again later.",
-      },
+      data: { message: "Impossible de joindre le serveur Railway. Vérifiez le CORS ou la connexion." },
     };
   }
 }
 
-// ── Auth API ─────────────────────────────────────────────────────────────────
+// ── API Auth ─────────────────────────────────────────────────────────────────
 
 /**
- * POST /api/auth/register
- *
- * @param {{ full_name: string, email: string, password: string, interests: string[] }} payload
- * @returns {Promise<{ ok: boolean, status: number, data: any }>}
+ * Register reste en JSON standard
  */
 export async function apiRegister(payload) {
   return request("/api/auth/register", {
@@ -91,20 +68,24 @@ export async function apiRegister(payload) {
 }
 
 /**
- * POST /api/auth/login
- *
- * On success, automatically stores the JWT in localStorage.
- *
- * @param {{ email: string, password: string }} payload
- * @returns {Promise<{ ok: boolean, status: number, data: any }>}
+ * Login : Modification pour FastAPI OAuth2
+ * FastAPI attend souvent un format 'application/x-www-form-urlencoded' 
+ * avec les clés 'username' et 'password'.
  */
-export async function apiLogin(payload) {
+export async function apiLogin({ email, password }) {
+  // Utilisation de URLSearchParams pour correspondre à OAuth2PasswordRequestForm du backend
+  const formData = new URLSearchParams();
+  formData.append("username", email); // FastAPI utilise 'username' par défaut pour l'email
+  formData.append("password", password);
+
   const result = await request("/api/auth/login", {
     method: "POST",
-    body: JSON.stringify(payload),
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: formData,
   });
 
-  // Auto-store the token on successful login
   if (result.ok && result.data?.access_token) {
     tokenStorage.set(result.data.access_token);
   }
@@ -112,43 +93,17 @@ export async function apiLogin(payload) {
   return result;
 }
 
-/**
- * Logout — clear the stored token.
- */
 export function apiLogout() {
   tokenStorage.remove();
 }
 
 /**
- * Extract a human-readable error message from an API response.
- *
- * The backend returns errors in two shapes:
- *   { "detail": { "code": "...", "message": "..." } }   ← custom errors
- *   { "detail": [ { "msg": "...", "loc": [...] } ] }    ← Pydantic validation errors
- *   { "detail": "plain string" }                        ← FastAPI defaults
- *
- * @param {any} data - the parsed JSON error body
- * @param {string} fallback - message to return if parsing fails
+ * Extraction des erreurs améliorée pour FastAPI
  */
-export function extractApiError(data, fallback = "Something went wrong. Please try again.") {
+export function extractApiError(data, fallback = "Une erreur est survenue.") {
   if (!data?.detail) return fallback;
-
-  const detail = data.detail;
-
-  // Custom structured error: { code, message }
-  if (typeof detail === "object" && !Array.isArray(detail) && detail.message) {
-    return detail.message;
-  }
-
-  // Pydantic validation errors array
-  if (Array.isArray(detail)) {
-    return detail.map((e) => e.msg || e.message || JSON.stringify(e)).join(". ");
-  }
-
-  // Plain string
-  if (typeof detail === "string") {
-    return detail;
-  }
-
+  if (typeof data.detail === "string") return data.detail;
+  if (Array.isArray(data.detail)) return data.detail.map(e => e.msg).join(". ");
+  if (data.detail.message) return data.detail.message;
   return fallback;
 }
