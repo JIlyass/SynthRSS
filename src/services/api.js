@@ -6,7 +6,7 @@
 
 // ── Configuration de l'URL ───────────────────────────────────────────────────
 // REMPLACEZ l'URL ci-dessous par l'URL publique générée par Railway (ex: https://synthrss-backend-production.up.railway.app)
-const API_BASE ="https://synthrssbackend-production.up.railway.app";
+const API_BASE ="https://synthssbackend-jilyass3162-5l3wutj5.leapcell.dev";
 
 // ── Gestion du Token ─────────────────────────────────────────────────────────
 const TOKEN_KEY = "brieflyai_token";
